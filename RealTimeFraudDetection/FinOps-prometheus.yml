@@ -1,0 +1,60 @@
+# prometheus.yml snippet for Financial Fraud Detection Monitoring
+global:
+  scrape_interval: 5s # High frequency for real-time fraud system
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: 'fraud_detection_services'
+    # Assuming custom exporter on each service instance
+    static_configs:
+      - targets: ['fraud-api-01:9090', 'model-inference-01:9091', 'transaction-processor-01:9092']
+
+  - job_name: 'kafka_broker'
+    static_configs:
+      - targets: ['kafka-exporter:9308'] # Kafka Exporter
+
+  - job_name: 'cassandra_db'
+    static_configs:
+      - targets: ['cassandra-exporter:9103'] # Cassandra Exporter
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager.finance.com:9093']
+
+rule_files:
+  - 'fraud_alert_rules.yml'
+
+# fraud_alert_rules.yml snippet for Financial Fraud Detection Monitoring
+groups:
+  - name: fraud_system_alerts
+    rules:
+      - alert: FraudModelHighLatency
+        expr: histogram_quantile(0.99, rate(fraud_model_inference_latency_seconds_bucket[5m])) > 0.1
+        for: 1m
+        labels:
+          severity: critical
+          domain: finance
+        annotations:
+          summary: "Fraud model 99th percentile inference latency is high ({{ $value }}s)"
+          description: "The fraud detection model is taking too long to process transactions, potentially delaying fraud alerts."
+
+      - alert: TransactionProcessingBacklog
+        expr: fraud_system_queue_depth > 1000
+        for: 2m
+        labels:
+          severity: critical
+          domain: finance
+        annotations:
+          summary: "Transaction processing queue backlog ({{ $value }} items)"
+          description: "The internal queue for fraud transaction processing has exceeded 1000 items, indicating a processing bottleneck."
+
+      - alert: UnexpectedFraudAlertVolume
+        expr: (rate(fraud_alerts_generated_total[5m]) < 10 or rate(fraud_alerts_generated_total[5m]) > 500) and changes(fraud_alerts_generated_total[1h]) > 1
+        for: 5m
+        labels:
+          severity: major
+          domain: finance
+        annotations:
+          summary: "Unusual fraud alert volume detected ({{ $value }} alerts/sec)"
+          description: "The rate of fraud alerts generated is unusually low or high, which could indicate a system issue or a new fraud pattern. Investigate immediately."

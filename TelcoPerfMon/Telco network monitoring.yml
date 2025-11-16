@@ -1,0 +1,67 @@
+# prometheus.yml snippet for Telco Network Monitoring
+global:
+  scrape_interval: 15s # How frequently to scrape targets
+  evaluation_interval: 15s # How frequently to evaluate rules
+
+scrape_configs:
+  - job_name: 'node_servers'
+    static_configs:
+      - targets: ['server1.telco.com:9100', 'server2.telco.com:9100'] # node_exporter instances
+
+  - job_name: 'network_devices_snmp'
+    # This assumes a custom exporter is running that converts SNMP data to Prometheus metrics
+    static_configs:
+      - targets: ['network-exporter.telco.com:9999'] # Your custom SNMP exporter
+    relabel_configs:
+      # Example: Add labels based on device type or location if your exporter provides them
+      - source_labels: [__address__]
+        regex: '([^:]+):.*'
+        target_label: instance
+        replacement: '$1'
+
+  - job_name: 'cdr_metrics'
+    # This assumes another custom exporter for CDR data
+    static_configs:
+      - targets: ['cdr-exporter.telco.com:9998']
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager.telco.com:9093']
+
+rule_files:
+  - 'alert_rules.yml'
+
+# alert_rules.yml snippet for Telco Network Monitoring
+groups:
+  - name: network_performance_alerts
+    rules:
+      - alert: HighPacketLoss
+        expr: (sum by (instance) (rate(node_network_transmit_errs_total{device="eth0"}[5m])) / sum by (instance) (rate(node_network_transmit_packets_total{device="eth0"}[5m]))) * 100 > 5
+        for: 5m
+        labels:
+          severity: critical
+          domain: telco
+        annotations:
+          summary: "High packet loss detected on {{ $labels.instance }} ({{ $value }}%)"
+          description: "Packet loss exceeding 5% on network interface eth0 of {{ $labels.instance }}. This indicates network congestion or hardware issues."
+
+      - alert: LowCallSuccessRate
+        expr: 100 - (sum by (region) (rate(cdr_call_failures_total[5m])) / sum by (region) (rate(cdr_calls_total[5m]))) * 100 < 95
+        for: 10m
+        labels:
+          severity: major
+          domain: telco
+        annotations:
+          summary: "Call success rate below 95% in {{ $labels.region }}"
+          description: "The call success rate has dropped below 95% in the {{ $labels.region }} region, indicating potential service degradation for voice calls."
+
+      - alert: HighBandwidthUtilization
+        expr: (sum by (instance) (rate(node_network_receive_bytes_total{device="eth0"}[5m])) + sum by (instance) (rate(node_network_transmit_bytes_total{device="eth0"}[5m]))) * 8 / (node_network_speed_bytes{device="eth0"} * 1024 * 1024) * 100 > 80
+        for: 15m
+        labels:
+          severity: warning
+          domain: telco
+        annotations:
+          summary: "High bandwidth utilization on {{ $labels.instance }} ({{ $value }}%)"
+          description: "Network interface eth0 on {{ $labels.instance }} is utilizing over 80% of its bandwidth. Consider capacity planning or traffic engineering."

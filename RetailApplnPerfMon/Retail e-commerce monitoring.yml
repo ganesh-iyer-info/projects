@@ -1,0 +1,70 @@
+# prometheus.yml snippet for Retail E-commerce Monitoring
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: 'ecom_app_services'
+    metrics_path: '/actuator/prometheus' # Common path for Spring Boot Actuator with Micrometer
+    static_configs:
+      - targets: ['api-service-01:8080', 'checkout-service-01:8081'] # Example application services
+
+  - job_name: 'postgres_db'
+    static_configs:
+      - targets: ['postgres-exporter:9187'] # Postgres Exporter
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '([^:]+):.*'
+        target_label: instance
+        replacement: '$1'
+
+  - job_name: 'redis_cache'
+    static_configs:
+      - targets: ['redis-exporter:9121'] # Redis Exporter
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '([^:]+):.*'
+        target_label: instance
+        replacement: '$1'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager.retail.com:9093']
+
+rule_files:
+  - 'retail_alert_rules.yml'
+
+# retail_alert_rules.yml snippet for Retail E-commerce Monitoring
+groups:
+  - name: ecom_application_alerts
+    rules:
+      - alert: HighAPILatency
+        expr: histogram_quantile(0.99, rate(http_server_requests_seconds_bucket{uri!~"/actuator.*"}[5m])) > 0.5
+        for: 2m
+        labels:
+          severity: critical
+          domain: retail
+        annotations:
+          summary: "High 99th percentile API latency ({{ $value }}s)"
+          description: "The 99th percentile latency for HTTP requests is above 0.5 seconds, indicating a performance bottleneck in the application."
+
+      - alert: CheckoutConversionDrop
+        expr: (sum(rate(checkout_completed_total[5m])) / sum(rate(add_to_cart_total[5m]))) * 100 < 70
+        for: 10m
+        labels:
+          severity: major
+          domain: retail
+        annotations:
+          summary: "Checkout conversion rate dropped below 70%"
+          description: "The conversion rate from 'add to cart' to 'checkout completed' has fallen significantly, suggesting issues in the checkout flow."
+
+      - alert: DatabaseConnectionPoolExhaustion
+        expr: pg_stat_activity_count{state="active"} / pg_settings_max_connections * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+          domain: retail
+        annotations:
+          summary: "PostgreSQL connection pool nearly exhausted ({{ $value }}%)"
+          description: "Over 90% of PostgreSQL connections are active, indicating potential database overload or connection leaks."
